@@ -6,6 +6,7 @@ struct ContentView: View {
     @ObservedObject var BLE: BLEManager
     @State private var showingExporter = false
     @State var file_content: TextFile = TextFile(initialText: "")
+    @State private var isFakeDataEnabled = false // State for toggle control
 
     var body: some View {
         VStack {
@@ -100,23 +101,18 @@ struct ContentView: View {
 
             Spacer()
 
-            // Buttons for dummy data control
+            // Toggle for Dummy Data Control
             VStack {
-                Button(action: {
-                    BLE.startDummyData()
-                }) {
-                    Text("Enable Dummy Data")
-                        .foregroundColor(.blue)
-                }
-                Button(action: {
-                    BLE.stopDummyData()
-                }) {
-                    Text("Disable Dummy Data")
-                        .foregroundColor(.red)
-                }
+                Toggle("Enable Fake Data", isOn: $isFakeDataEnabled)
+                    .onChange(of: isFakeDataEnabled) { value in
+                        if value {
+                            BLE.startDummyData()
+                        } else {
+                            BLE.stopDummyData()
+                        }
+                    }
+                    .padding()
             }
-            .padding()
-
         }
         .fileExporter(isPresented: $showingExporter, document: file_content, contentType: .commaSeparatedText, defaultFilename: "emg-data") { result in
             switch result {
