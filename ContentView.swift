@@ -6,6 +6,7 @@ struct ContentView: View {
     @ObservedObject var BLE: BLEManager
     @State private var showingExporter = false
     @State var file_content: TextFile = TextFile(initialText: "")
+    @State private var displayedMaxRMS: Float = 0.0 // Manual Max RMS Display
 
     var body: some View {
         GeometryReader { geometry in
@@ -93,10 +94,22 @@ struct ContentView: View {
                     .frame(height: geometry.size.height / 12)
                 }
 
-                // Max 1-Second RMS Value
-                Text("Max 1-Second RMS: \(BLE.max1SecRMS, specifier: "%.2f")")
-                    .font(.system(size: 14))
-                    .foregroundColor(.green)
+                // Manual Max 1-Second RMS Value Display
+                HStack {
+                    Text("Max 1-Second RMS: \(displayedMaxRMS, specifier: "%.2f")")
+                        .font(.system(size: 14))
+                        .foregroundColor(.green)
+                    Button(action: {
+                        displayedMaxRMS = BLE.max1SecRMS // Update the manually displayed Max RMS
+                    }) {
+                        Text("Update Max RMS")
+                            .font(.system(size: 14))
+                            .padding(5)
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(5)
+                    }
+                }
 
                 // Connect to Sensor Section
                 if !BLE.isConnected {
