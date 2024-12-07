@@ -19,14 +19,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     @Published var isConnected = false
     var CBPeripherals = [CBPeripheral]()
     var emg: emgGraph
-
+    
     // RMS Buffers and Calculation
     private var emgBuffer: [Float] = []
     private let windowSize = 16 // 128 ms at 8 Hz
     @Published var currentRMS: Float = 0.0
     @Published var rmsHistory: [Float] = []
     private let dataQueue = DispatchQueue(label: "com.emg.ble.data")
-
+    
     // 1-Second RMS and Maximum Calculation
     private var shortTermRMSBuffer: [Float] = [] // Buffer for 0.1-second RMS values
     private let shortTermRMSWindowSize = 10 // 10 x 0.1s = 1 second
@@ -35,19 +35,19 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     private var lastMaxRMSUpdateTime: Date = Date()
     @Published var max1SecRMS: Float = 0.0
     @Published var max1SecRMSHistory: [Float] = []
-
+    
     init(emg: emgGraph) {
         self.emg = emg
         super.init()
         myCentral = CBCentralManager(delegate: self, queue: nil)
     }
-
+    
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
         DispatchQueue.main.async {
             self.BLEisOn = (central.state == .poweredOn)
         }
     }
-
+    
     func checkBluetoothPermissions() {
         switch myCentral.authorization {
         case .allowedAlways:
@@ -58,7 +58,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             print("Bluetooth authorization pending")
         }
     }
-
+    
     func startScanning() {
         guard !isConnected else {
             print("Already connected, skipping scanning.")
@@ -69,12 +69,12 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         CBPeripherals.removeAll()
         myCentral.scanForPeripherals(withServices: nil)
     }
-
+    
     func stopScanning() {
         print("Stop Scanning")
         myCentral.stopScan()
     }
-
+    
     func connectSensor(p: Peripheral) {
         guard p.id < CBPeripherals.count else {
             print("Invalid peripheral ID")
@@ -82,7 +82,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         }
         myCentral.connect(CBPeripherals[p.id])
     }
-
+    
     func centralManager(_ central: CBCentralManager, didDiscover peripheral: CBPeripheral, advertisementData: [String: Any], rssi RSSI: NSNumber) {
         let peripheralName = advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? "Unknown"
         let targetDeviceName = "EMGBLE2"
@@ -90,16 +90,16 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             print("Skipping device: \(peripheralName)")
             return
         }
-
+        
         let newPeripheral = Peripheral(id: BLEPeripherals.count, name: peripheralName, rssi: RSSI.intValue)
         DispatchQueue.main.async {
             self.BLEPeripherals.append(newPeripheral)
         }
         CBPeripherals.append(peripheral)
-
+        
         print("Added device: \(peripheralName) with RSSI: \(RSSI.intValue)")
     }
-
+    
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         print("Connected to \(peripheral.name ?? "Unknown Device")")
         DispatchQueue.main.async {
@@ -109,14 +109,14 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         peripheral.delegate = self
         peripheral.discoverServices(nil)
     }
-
+    
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         print("Disconnected from \(peripheral.name ?? "Unknown Device")")
         DispatchQueue.main.async {
             self.isConnected = false
         }
     }
-
+    
     // RMS calculations and updates
     func processAndAppendEMGData(_ rawEMGData: [Float]) {
         // Calculate mean and center the data
@@ -126,22 +126,22 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         DispatchQueue.main.async {
             self.emg.append(values: centeredData.map { CGFloat($0) })
         }
-
+        
         // Proceed with RMS calculations
         updateRMS(with: centeredData)
     }
-
+    
     func updateRMS(with newValues: [Float]) {
         dataQueue.async {
             self.emgBuffer.append(contentsOf: newValues)
-
+            
             if self.emgBuffer.count > self.windowSize {
                 self.emgBuffer.removeFirst(self.emgBuffer.count - self.windowSize)
             }
-
+            
             if self.emgBuffer.count == self.windowSize {
                 let rms = self.calculateRMS(from: self.emgBuffer)
-
+                
                 DispatchQueue.main.async {
                     self.currentRMS = rms
                     self.rmsHistory.append(rms)
@@ -149,30 +149,35 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
                         self.rmsHistory.removeFirst()
                     }
                 }
-
+                
                 // Update 1-second RMS and maximum RMS
                 self.updateMoving1SecRMS(fromShortTermRMS: rms)
             }
         }
     }
-
+    
     func calculateRMS(from samples: [Float]) -> Float {
         guard !samples.isEmpty else { return 0.0 }
         let squaredSum = samples.reduce(0.0) { $0 + $1 * $1 }
         return sqrt(squaredSum / Float(samples.count))
     }
-
+    
     private func updateMoving1SecRMS(fromShortTermRMS newRMS: Float) {
+        // Add the new 0.1s RMS value to the buffer
         shortTermRMSBuffer.append(newRMS)
 
-        if shortTermRMSBuffer.count > shortTermRMSWindowSize {
+        // Maintain a buffer size of 10 (representing 1 second of data)
+        if shortTermRMSBuffer.count > shortTermRMSWindowSize { // shortTermRMSWindowSize == 10
             shortTermRMSBuffer.removeFirst()
         }
 
+        // Calculate the 1-second RMS only if the buffer is full
         if shortTermRMSBuffer.count == shortTermRMSWindowSize {
+            // Calculate RMS for the 10 values in the buffer
             let sumOfSquares = shortTermRMSBuffer.reduce(0.0) { $0 + $1 * $1 }
             let oneSecondRMS = sqrt(sumOfSquares / Float(shortTermRMSBuffer.count))
 
+            // Update the 1-second RMS history and max RMS
             DispatchQueue.main.async {
                 self.max1SecRMSHistory.append(oneSecondRMS)
                 if self.max1SecRMSHistory.count > 100 {
@@ -180,19 +185,21 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
                 }
             }
 
+            // Update the max RMS value over time
             self.updateMaxRMS(oneSecondRMS)
         }
     }
 
     private func updateMaxRMS(_ oneSecondRMS: Float) {
-        maxRMSOverTime = max(maxRMSOverTime, oneSecondRMS)
-
         let currentTime = Date()
+        maxRMSOverTime = max(maxRMSOverTime, oneSecondRMS) // Update rolling maximum
+
+        // Update the displayed max RMS every 1 second
         if currentTime.timeIntervalSince(lastMaxRMSUpdateTime) >= maxRMSUpdateInterval {
             DispatchQueue.main.async {
-                self.max1SecRMS = self.maxRMSOverTime
+                self.max1SecRMS = self.maxRMSOverTime // Update the max RMS
             }
-            maxRMSOverTime = 0.0
+            maxRMSOverTime = 0.0 // Reset rolling max for the next interval
             lastMaxRMSUpdateTime = currentTime
         }
     }
@@ -247,4 +254,3 @@ extension BLEManager: CBPeripheralDelegate {
         }
     }
 }
-
