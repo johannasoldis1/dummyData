@@ -8,134 +8,180 @@ struct ContentView: View {
     @State var file_content: TextFile = TextFile(initialText: "")
 
     var body: some View {
-        VStack {
-            // Graph visualization
-            Path { path in
-                let height = UIScreen.main.bounds.height / 3
-                let width = UIScreen.main.bounds.width
-                let firstSample = { () -> Int in
-                    if graph.values.count > 1000 {
-                        return graph.values.count - 1000
-                    } else {
-                        return 0
+        GeometryReader { geometry in
+            VStack(spacing: 10) { // Reduce spacing between sections for compact layout
+
+                // Raw EMG Graph
+                VStack {
+                    Text("Raw EMG Data")
+                        .font(.headline)
+
+                    Path { path in
+                        let height = geometry.size.height / 8
+                        let width = geometry.size.width
+
+                        guard graph.values.count > 1 else { return }
+
+                        let firstSample = max(0, graph.values.count - 50)
+                        let cutGraph = graph.values[firstSample..<graph.values.count]
+                        let midY = height / 2
+
+                        guard !cutGraph.isEmpty else { return }
+
+                        path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(cutGraph.first ?? 0)))
+
+                        for (index, value) in cutGraph.enumerated() {
+                            let x = width * CGFloat(index) / CGFloat(cutGraph.count - 1)
+                            let y = midY - height / 2 * CGFloat(value)
+                            path.addLine(to: CGPoint(x: x, y: y))
+                        }
                     }
+                    .stroke(Color.blue, lineWidth: 1.5)
+                    .frame(height: geometry.size.height / 8)
                 }
-                let cutGraph = graph.values[firstSample()..<graph.values.count]
-                path.move(to: CGPoint(x: 0.0, y: 0.0))
 
-                cutGraph.enumerated().forEach { index, item in
-                    path.addLine(to: CGPoint(x: width * CGFloat(index) / (CGFloat(cutGraph.count) - 1.0), y: height * item))
-                }
-            }
-            .stroke(Color.red, lineWidth: 1.5)
+                // RMS Graph
+                VStack {
+                    Text("RMS Data")
+                        .font(.headline)
 
-            // Bluetooth device list
-            Text("Connect to sensor")
-                .font(.title)
-                .frame(maxWidth: .infinity, alignment: .center)
-            List(BLE.BLEPeripherals) { peripheral in
-                HStack {
-                    Text(peripheral.name).onTapGesture {
-                        print(peripheral)
-                        BLE.connectSensor(p: peripheral)
+                    Path { path in
+                        let height = geometry.size.height / 12
+                        let width = geometry.size.width
+
+                        guard !BLE.rmsHistory.isEmpty else { return }
+                        let midY = height / 2
+
+                        path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(BLE.rmsHistory.first ?? 0)))
+
+                        for (index, value) in BLE.rmsHistory.enumerated() {
+                            let x = CGFloat(index) * width / CGFloat(BLE.rmsHistory.count - 1)
+                            let y = midY - height / 2 * CGFloat(value)
+                            path.addLine(to: CGPoint(x: x, y: y))
+                        }
                     }
-                    Spacer()
-                    Text(String(peripheral.rssi))
+                    .stroke(Color.red, lineWidth: 2.0)
+                    .frame(height: geometry.size.height / 12)
                 }
-            }
-            .frame(height: 300)
 
-            Spacer()
-
-            // Status display
-            Text("STATUS")
-                .font(.headline)
-            if BLE.BLEisOn {
-                Text("Bluetooth is switched on")
-                    .foregroundColor(.green)
-            } else {
-                Text("Bluetooth is NOT switched on")
+                // Current RMS Value
+                Text("Current RMS: \(BLE.currentRMS, specifier: "%.2f")")
+                    .font(.system(size: 14))
                     .foregroundColor(.red)
+
+                // Max 1-Second RMS Graph
+                VStack {
+                    Text("Max 1-Second RMS Data")
+                        .font(.headline)
+
+                    Path { path in
+                        let height = geometry.size.height / 12
+                        let width = geometry.size.width
+
+                        guard !BLE.max1SecRMSHistory.isEmpty else { return }
+                        let midY = height / 2
+
+                        path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(BLE.max1SecRMSHistory.first ?? 0)))
+
+                        for (index, value) in BLE.max1SecRMSHistory.enumerated() {
+                            let x = CGFloat(index) * width / CGFloat(BLE.max1SecRMSHistory.count - 1)
+                            let y = midY - height / 2 * CGFloat(value)
+                            path.addLine(to: CGPoint(x: x, y: y))
+                        }
+                    }
+                    .stroke(Color.green, lineWidth: 2.0)
+                    .frame(height: geometry.size.height / 12)
+                }
+
+                // Max 1-Second RMS Value
+                Text("Max 1-Second RMS: \(BLE.max1SecRMS, specifier: "%.2f")")
+                    .font(.system(size: 14))
+                    .foregroundColor(.green)
+
+                // Connect to Sensor Section
+                if !BLE.isConnected {
+                    VStack {
+                        Text("Connect to Sensor")
+                            .font(.headline)
+
+                        List(BLE.BLEPeripherals) { peripheral in
+                            HStack {
+                                Text(peripheral.name).onTapGesture {
+                                    BLE.connectSensor(p: peripheral)
+                                }
+                                Spacer()
+                                Text("\(peripheral.rssi)")
+                            }
+                        }
+                        .frame(height: geometry.size.height / 10)
+                    }
+                } else {
+                    Text("Connected to EMGBLE2!")
+                        .font(.headline)
+                        .foregroundColor(.green)
+                }
+
+                // Status Display
+                VStack {
+                    Text("STATUS")
+                        .font(.headline)
+                    if BLE.BLEisOn {
+                        Text("Bluetooth is switched on")
+                            .foregroundColor(.green)
+                    } else {
+                        Text("Bluetooth is NOT switched on")
+                            .foregroundColor(.red)
+                    }
+                }
+
+                // Buttons for Bluetooth scanning and recording
+                HStack {
+                    VStack(spacing: 5) {
+                        Button("Start Scanning") { BLE.startScanning() }
+                            .disabled(BLE.isConnected)
+
+                        Button("Stop Scanning") { BLE.stopScanning() }
+                            .disabled(!BLE.BLEisOn || BLE.isConnected)
+                    }
+                    .padding()
+
+                    Spacer()
+
+                    VStack(spacing: 5) {
+                        Button("Start Recording") {
+                            DispatchQueue.global(qos: .background).async {
+                                graph.record()
+                                DispatchQueue.main.async {
+                                    print("Recording started.")
+                                }
+                            }
+                        }
+
+                        Button("Stop Recording") {
+                            DispatchQueue.global(qos: .background).async {
+                                let fileContent = graph.stop_recording_and_save()
+                                DispatchQueue.main.async {
+                                    file_content.text = fileContent
+                                    print("Recording stopped and saved.")
+                                }
+                            }
+                        }
+
+                        Button("Export last") { showingExporter = true }
+                    }
+                    .padding()
+                }
             }
-
-            Spacer()
-
-            // Buttons for Bluetooth scanning and recording
-            HStack {
-                VStack(spacing: 10) {
-                    Button(action: {
-                        BLE.startScanning()
-                    }) {
-                        Text("Start Scanning")
-                    }
-                    Button(action: {
-                        BLE.stopScanning()
-                    }) {
-                        Text("Stop Scanning")
-                    }
-                }
-                .padding()
-
-                Spacer()
-
-                VStack(spacing: 10) {
-                    Button(action: {
-                        graph.record()
-                    }) {
-                        Text("Start Recording")
-                    }
-                    Button(action: {
-                        file_content.text = graph.stop_recording_and_save()
-                    }) {
-                        Text("Stop Recording")
-                    }
-                    Button(action: {
-                        showingExporter = true
-                    }) {
-                        Text("Export last")
-                    }
-                }
-                .padding()
-            }
-
-            Spacer()
-
-            // Buttons for dummy data control
-            VStack {
-                Button(action: {
-                    BLE.startDummyData()
-                }) {
-                    Text("Enable Dummy Data")
-                        .foregroundColor(.blue)
-                }
-                Button(action: {
-                    BLE.stopDummyData()
-                }) {
-                    Text("Disable Dummy Data")
-                        .foregroundColor(.red)
+            .padding(10)
+            .fileExporter(isPresented: $showingExporter, document: file_content, contentType: .commaSeparatedText, defaultFilename: "emg-data") { result in
+                switch result {
+                case .success(let url):
+                    print("Saved to \(url)")
+                case .failure(let error):
+                    print(error.localizedDescription)
                 }
             }
-            .padding()
-
         }
-        .fileExporter(isPresented: $showingExporter, document: file_content, contentType: .commaSeparatedText, defaultFilename: "emg-data") { result in
-            switch result {
-            case .success(let url):
-                print("Saved to \(url)")
-            case .failure(let error):
-                print(error.localizedDescription)
-            }
-        }
-    }
-}
-
-struct ContentView_Previews: PreviewProvider {
-    static var previews: some View {
-        let graph = emgGraph(firstValues: Array(repeating: 0.5, count: 100)).enableDummyData()
-        let BLE = BLEManager(emg: graph)
-        BLE.startDummyData() // Enable dummy data in preview
-        return ContentView(graph: graph, BLE: BLE)
-            .previewInterfaceOrientation(.portrait)
     }
 }
 
