@@ -39,26 +39,22 @@ class emgGraph: ObservableObject {
         buffer.removeAll()
         shortTermRMSBuffer.removeAll()
     }
-
-    // Stop recording and save data
+    
     func stop_recording_and_save() -> String {
         recording = false
         let sampleInterval = 1.0 / Double(sampleRate)
 
-        // Center the recorded values around 0 before export
         let mean = recorded_values.reduce(0.0, +) / CGFloat(recorded_values.count)
         let centeredValues = recorded_values.map { $0 - mean }
 
-        // Prepare CSV dataset
         var dataset = "Time,EMG,RMS,Max1SecRMS\n"
         for (index, value) in centeredValues.enumerated() {
             let time = Double(index) * sampleInterval
             let rmsValue = index < recorded_rms.count ? recorded_rms[index] : 0.0
-            let maxRMSValue = max1SecRMS
+            let maxRMSValue = index < max1SecRMSHistory.count ? max1SecRMSHistory[index] : 0.0
             dataset += "\(time),\(value),\(rmsValue),\(maxRMSValue)\n"
         }
 
-        // Save the dataset
         saveToFile(dataset)
         return dataset
     }
