@@ -28,7 +28,7 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     private let dataQueue = DispatchQueue(label: "com.emg.ble.data")
 
     // 1-Second RMS and Maximum Calculation
-    private var shortTermRMSBuffer: [Float] = []
+    private var shortTermRMSBuffer: [Float] = [] // Buffer for 0.1-second RMS values
     private let shortTermRMSWindowSize = 10 // 10 x 0.1s = 1 second
     private var maxRMSOverTime: Float = 0.0
     private let maxRMSUpdateInterval: TimeInterval = 1.0
@@ -117,6 +117,20 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         }
     }
 
+    // RMS calculations and updates
+    func processAndAppendEMGData(_ rawEMGData: [Float]) {
+        // Calculate mean and center the data
+        let mean = rawEMGData.reduce(0.0, +) / Float(rawEMGData.count)
+        let centeredData = rawEMGData.map { $0 - mean }
+        
+        DispatchQueue.main.async {
+            self.emg.append(values: centeredData.map { CGFloat($0) })
+        }
+
+        // Proceed with RMS calculations
+        updateRMS(with: centeredData)
+    }
+
     func updateRMS(with newValues: [Float]) {
         dataQueue.async {
             self.emgBuffer.append(contentsOf: newValues)
@@ -126,23 +140,26 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             }
 
             if self.emgBuffer.count == self.windowSize {
-                let mean = self.emgBuffer.reduce(0.0, +) / Float(self.emgBuffer.count)
-                let centeredBuffer = self.emgBuffer.map { $0 - mean }
-                let sumOfSquares = centeredBuffer.reduce(0.0) { $0 + $1 * $1 }
-                let rms = sqrt(sumOfSquares / Float(centeredBuffer.count))
+                let rms = self.calculateRMS(from: self.emgBuffer)
 
                 DispatchQueue.main.async {
-                    let smoothedRMS = self.smoothRMS(rms)
-                    self.currentRMS = smoothedRMS
-                    self.rmsHistory.append(smoothedRMS)
+                    self.currentRMS = rms
+                    self.rmsHistory.append(rms)
                     if self.rmsHistory.count > 100 {
                         self.rmsHistory.removeFirst()
                     }
                 }
 
+                // Update 1-second RMS and maximum RMS
                 self.updateMoving1SecRMS(fromShortTermRMS: rms)
             }
         }
+    }
+
+    func calculateRMS(from samples: [Float]) -> Float {
+        guard !samples.isEmpty else { return 0.0 }
+        let squaredSum = samples.reduce(0.0) { $0 + $1 * $1 }
+        return sqrt(squaredSum / Float(samples.count))
     }
 
     private func updateMoving1SecRMS(fromShortTermRMS newRMS: Float) {
@@ -178,11 +195,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             maxRMSOverTime = 0.0
             lastMaxRMSUpdateTime = currentTime
         }
-    }
-
-    private func smoothRMS(_ rms: Float) -> Float {
-        guard let lastRMS = rmsHistory.last else { return rms }
-        return lastRMS * 0.8 + rms * 0.2
     }
 }
 
@@ -229,12 +241,10 @@ extension BLEManager: CBPeripheralDelegate {
                 graphData.append(value / 4096.0)
             }
 
-            DispatchQueue.main.async {
-                self.emg.append(values: graphData.map { CGFloat($0) })
-            }
-            updateRMS(with: graphData)
+            processAndAppendEMGData(graphData)
         default:
             print("Unhandled characteristic UUID: \(characteristic.uuid)")
         }
     }
 }
+
