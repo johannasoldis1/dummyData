@@ -6,11 +6,10 @@ struct ContentView: View {
     @ObservedObject var BLE: BLEManager
     @State private var showingExporter = false
     @State var file_content: TextFile = TextFile(initialText: "")
-    @State private var displayedMaxRMS: Float = 0.0 // Manual Max RMS Display
 
     var body: some View {
         GeometryReader { geometry in
-            VStack(spacing: 10) { // Reduce spacing between sections for compact layout
+            VStack(spacing: 10) {
 
                 // Raw EMG Graph
                 VStack {
@@ -41,51 +40,22 @@ struct ContentView: View {
                     .frame(height: geometry.size.height / 8)
                 }
 
-                // RMS Graph
+                // 1-Second RMS Graph
                 VStack {
-                    Text("RMS Data")
+                    Text("1-Second RMS Data")
                         .font(.headline)
 
                     Path { path in
                         let height = geometry.size.height / 12
                         let width = geometry.size.width
 
-                        guard !BLE.rmsHistory.isEmpty else { return }
+                        guard !graph.max1SecRMSHistory.isEmpty else { return }
                         let midY = height / 2
 
-                        path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(BLE.rmsHistory.first ?? 0)))
+                        path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(graph.max1SecRMSHistory.first ?? 0)))
 
-                        for (index, value) in BLE.rmsHistory.enumerated() {
-                            let x = CGFloat(index) * width / CGFloat(BLE.rmsHistory.count - 1)
-                            let y = midY - height / 2 * CGFloat(value)
-                            path.addLine(to: CGPoint(x: x, y: y))
-                        }
-                    }
-                    .stroke(Color.red, lineWidth: 2.0)
-                    .frame(height: geometry.size.height / 12)
-                }
-
-                // Current RMS Value
-                Text("Current RMS: \(BLE.currentRMS, specifier: "%.2f")")
-                    .font(.system(size: 14))
-                    .foregroundColor(.red)
-
-                // Max 1-Second RMS Graph
-                VStack {
-                    Text("Max 1-Second RMS Data")
-                        .font(.headline)
-
-                    Path { path in
-                        let height = geometry.size.height / 12
-                        let width = geometry.size.width
-
-                        guard !BLE.max1SecRMSHistory.isEmpty else { return }
-                        let midY = height / 2
-
-                        path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(BLE.max1SecRMSHistory.first ?? 0)))
-
-                        for (index, value) in BLE.max1SecRMSHistory.enumerated() {
-                            let x = CGFloat(index) * width / CGFloat(BLE.max1SecRMSHistory.count - 1)
+                        for (index, value) in graph.max1SecRMSHistory.enumerated() {
+                            let x = CGFloat(index) * width / CGFloat(graph.max1SecRMSHistory.count - 1)
                             let y = midY - height / 2 * CGFloat(value)
                             path.addLine(to: CGPoint(x: x, y: y))
                         }
@@ -94,22 +64,10 @@ struct ContentView: View {
                     .frame(height: geometry.size.height / 12)
                 }
 
-                // Manual Max 1-Second RMS Value Display
-                HStack {
-                    Text("Max 1-Second RMS: \(displayedMaxRMS, specifier: "%.2f")")
-                        .font(.system(size: 14))
-                        .foregroundColor(.green)
-                    Button(action: {
-                        displayedMaxRMS = BLE.max1SecRMS // Update the manually displayed Max RMS
-                    }) {
-                        Text("Update Max RMS")
-                            .font(.system(size: 14))
-                            .padding(5)
-                            .background(Color.blue)
-                            .foregroundColor(.white)
-                            .cornerRadius(5)
-                    }
-                }
+                // Current 1-Second RMS Value
+                Text("1-Second RMS: \(graph.max1SecRMS, specifier: "%.2f")")
+                    .font(.system(size: 14))
+                    .foregroundColor(.green)
 
                 // Connect to Sensor Section
                 if !BLE.isConnected {
@@ -218,3 +176,5 @@ struct TextFile: FileDocument {
         return FileWrapper(regularFileWithContents: data)
     }
 }
+
+
