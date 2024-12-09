@@ -161,45 +161,42 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         let squaredSum = samples.reduce(0.0) { $0 + $1 * $1 }
         return sqrt(squaredSum / Float(samples.count))
     }
-    
+
     private func updateMoving1SecRMS(fromShortTermRMS newRMS: Float) {
-        // Add the new 0.1s RMS value to the buffer
+        // Add the new 0.1-second RMS value to the buffer
         shortTermRMSBuffer.append(newRMS)
 
         // Maintain a buffer size of 10 (representing 1 second of data)
-        if shortTermRMSBuffer.count > shortTermRMSWindowSize { // shortTermRMSWindowSize == 10
+        if shortTermRMSBuffer.count > shortTermRMSWindowSize {
             shortTermRMSBuffer.removeFirst()
         }
 
-        // Calculate the 1-second RMS only if the buffer is full
+        // Calculate the 1-second RMS using a moving average if the buffer is full
         if shortTermRMSBuffer.count == shortTermRMSWindowSize {
-            // Calculate RMS for the 10 values in the buffer
-            let sumOfSquares = shortTermRMSBuffer.reduce(0.0) { $0 + $1 * $1 }
-            let oneSecondRMS = sqrt(sumOfSquares / Float(shortTermRMSBuffer.count))
+            let movingAverageRMS = shortTermRMSBuffer.reduce(0.0) { $0 + $1 } / Float(shortTermRMSBuffer.count)
 
-            // Update the 1-second RMS history and max RMS
             DispatchQueue.main.async {
-                self.max1SecRMSHistory.append(oneSecondRMS)
+                // Update the 1-second RMS history
+                self.max1SecRMSHistory.append(movingAverageRMS)
                 if self.max1SecRMSHistory.count > 100 {
                     self.max1SecRMSHistory.removeFirst()
                 }
             }
 
-            // Update the max RMS value over time
-            self.updateMaxRMS(oneSecondRMS)
+            // Update the maximum RMS for the last 1-second interval
+            self.updateMaxRMS(movingAverageRMS)
         }
     }
-
     private func updateMaxRMS(_ oneSecondRMS: Float) {
         let currentTime = Date()
-        maxRMSOverTime = max(maxRMSOverTime, oneSecondRMS) // Update rolling maximum
+        maxRMSOverTime = max(maxRMSOverTime, oneSecondRMS)
 
-        // Update the displayed max RMS every 1 second
+        // Ensure proper update timing
         if currentTime.timeIntervalSince(lastMaxRMSUpdateTime) >= maxRMSUpdateInterval {
             DispatchQueue.main.async {
-                self.max1SecRMS = self.maxRMSOverTime // Update the max RMS
+                self.max1SecRMS = self.maxRMSOverTime
             }
-            maxRMSOverTime = 0.0 // Reset rolling max for the next interval
+            maxRMSOverTime = oneSecondRMS // Start tracking from current value
             lastMaxRMSUpdateTime = currentTime
         }
     }
