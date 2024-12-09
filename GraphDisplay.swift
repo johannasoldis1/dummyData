@@ -2,12 +2,10 @@ import CoreGraphics
 import SwiftUI
 
 class emgGraph: ObservableObject {
-    // Published properties for UI updates
     @Published private(set) var values: [CGFloat] = [] // Raw EMG values for display
     @Published var max1SecRMS: CGFloat = 0.0 // Tracks the maximum 1-second RMS during recording
     @Published var max1SecRMSHistory: [CGFloat] = [] // History of max1SecRMS
 
-    // Internal buffers and settings
     var recorded_values: [CGFloat] = [] // Recorded EMG values for export
     var recorded_rms: [CGFloat] = [] // RMS values for export
     var timestamps: [CFTimeInterval] = [] // Time for each recorded value
@@ -17,16 +15,13 @@ class emgGraph: ObservableObject {
     private var buffer: [CGFloat] = [] // Buffer for short-term RMS calculations
     private let sampleRate: Int = 10 // Number of samples per second
 
-    // Short-term and 1-second RMS buffers
-    private var shortTermRMSBuffer: [Float] = []
+    private var shortTermRMSBuffer: [Float] = [] // Buffer for 1-second RMS calculation
     private let shortTermRMSWindowSize = 10 // 10 samples for 1-second RMS
 
-    // Initialize the class
     init(firstValues: [CGFloat]) {
         values = firstValues
     }
 
-    // Start recording
     func record() {
         recording = true
         start_time = CACurrentMediaTime()
@@ -38,23 +33,33 @@ class emgGraph: ObservableObject {
         timestamps.removeAll()
         buffer.removeAll()
         shortTermRMSBuffer.removeAll()
+        max1SecRMSHistory.removeAll()
     }
     
     func stop_recording_and_save() -> String {
         recording = false
-        let sampleInterval = 1.0 / Double(sampleRate)
+        let sampleInterval = 1.0 // 1-second intervals
 
+        // Calculate centered raw data
         let mean = recorded_values.reduce(0.0, +) / CGFloat(recorded_values.count)
         let centeredValues = recorded_values.map { $0 - mean }
 
-        var dataset = "Time,EMG,RMS,Max1SecRMS\n"
-        for (index, value) in centeredValues.enumerated() {
+        // Header for CSV
+        var dataset = "Time,1-Second RMS,Max RMS\n"
+
+        // Export every 1-second interval
+        for (index, rmsValue) in recorded_rms.enumerated() {
+            guard index % sampleRate == 0 else { continue } // Only export 1-second intervals
             let time = Double(index) * sampleInterval
-            let rmsValue = index < recorded_rms.count ? recorded_rms[index] : 0.0
-            let maxRMSValue = index < max1SecRMSHistory.count ? max1SecRMSHistory[index] : 0.0
-            dataset += "\(time),\(value),\(rmsValue),\(maxRMSValue)\n"
+
+            // Ensure alignment with max RMS history
+            let historyIndex = index / sampleRate
+            let maxRMSValue = historyIndex < max1SecRMSHistory.count ? max1SecRMSHistory[historyIndex] : 0.0
+
+            dataset += "\(time),\(rmsValue),\(maxRMSValue)\n"
         }
 
+        // Save dataset to file
         saveToFile(dataset)
         return dataset
     }
@@ -63,10 +68,10 @@ class emgGraph: ObservableObject {
         DispatchQueue.global(qos: .background).async {
             let paths = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
             let date = Date()
-            let dateformatter = DateFormatter()
-            dateformatter.dateFormat = "yyyy-MM-dd'T'HH_mm_ss"
+            let dateFormatter = DateFormatter()
+            dateFormatter.dateFormat = "yyyy-MM-dd'T'HH_mm_ss"
 
-            let filename = paths[0].appendingPathComponent("emg_data_" + dateformatter.string(from: date) + ".csv")
+            let filename = paths[0].appendingPathComponent("emg_data_" + dateFormatter.string(from: date) + ".csv")
             do {
                 try dataset.write(to: filename, atomically: true, encoding: .utf8)
                 print("File saved successfully")
@@ -76,9 +81,8 @@ class emgGraph: ObservableObject {
         }
     }
 
-    // Append a single value to the graph and recording buffers
     func append(value: CGFloat) {
-        let now = CACurrentMediaTime() // Use high-precision timestamp for recording
+        let now = CACurrentMediaTime() // High-precision timestamp for recording
         if recording {
             recorded_values.append(value)
             timestamps.append(now - start_time)
@@ -113,7 +117,6 @@ class emgGraph: ObservableObject {
         }
     }
 
-    // Append multiple values at once
     func append(values: [CGFloat]) {
         let now = CACurrentMediaTime()
         if recording {
@@ -152,7 +155,6 @@ class emgGraph: ObservableObject {
         }
     }
 
-    // Calculate RMS for an array of values
     func calculateRMS(for values: [CGFloat]) -> CGFloat {
         guard !values.isEmpty else { return 0.0 }
         let mean = values.reduce(0.0, +) / CGFloat(values.count)
@@ -161,7 +163,6 @@ class emgGraph: ObservableObject {
         return sqrt(squaredSum / CGFloat(centeredValues.count))
     }
 
-    // Update 1-second RMS based on short-term RMS values
     private func updateMoving1SecRMS(fromShortTermRMS newRMS: Float) {
         shortTermRMSBuffer.append(newRMS)
 
@@ -183,3 +184,4 @@ class emgGraph: ObservableObject {
         }
     }
 }
+
