@@ -15,6 +15,7 @@ struct ContentView: View {
                 VStack {
                     Text("Raw EMG Data")
                         .font(.headline)
+                        .foregroundColor(.blue)
 
                     Path { path in
                         let height = geometry.size.height / 8
@@ -22,7 +23,7 @@ struct ContentView: View {
 
                         guard graph.values.count > 1 else { return }
 
-                        let firstSample = max(0, graph.values.count - 50)
+                        let firstSample = max(0, graph.values.count - 200)
                         let cutGraph = graph.values[firstSample..<graph.values.count]
                         let midY = height / 2
 
@@ -40,22 +41,53 @@ struct ContentView: View {
                     .frame(height: geometry.size.height / 8)
                 }
 
-                // 1-Second RMS Graph
+                // 0.1-Second RMS Graph
                 VStack {
-                    Text("1-Second RMS Data")
+                    Text("0.1-Second RMS Data (Short-Term)")
                         .font(.headline)
+                        .foregroundColor(.red)
 
                     Path { path in
                         let height = geometry.size.height / 12
                         let width = geometry.size.width
 
-                        guard !graph.max1SecRMSHistory.isEmpty else { return }
+                        guard !graph.shortTermRMSHistory.isEmpty else { return }
+
+                        let smoothedRMS = smoothRMS(data: graph.shortTermRMSHistory, windowSize: 5)
                         let midY = height / 2
 
-                        path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(graph.max1SecRMSHistory.first ?? 0)))
+                        path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(smoothedRMS.first ?? 0)))
 
-                        for (index, value) in graph.max1SecRMSHistory.enumerated() {
-                            let x = CGFloat(index) * width / CGFloat(graph.max1SecRMSHistory.count - 1)
+                        for (index, value) in smoothedRMS.enumerated() {
+                            let x = CGFloat(index) * width / CGFloat(smoothedRMS.count - 1)
+                            let y = midY - height / 2 * CGFloat(value)
+                            path.addLine(to: CGPoint(x: x, y: y))
+                        }
+                    }
+                    .stroke(Color.red, lineWidth: 2.0)
+                    .frame(height: geometry.size.height / 12)
+                }
+                .padding(.top, 10)
+
+                // 1-Second RMS Graph
+                VStack {
+                    Text("1-Second RMS Data")
+                        .font(.headline)
+                        .foregroundColor(.green)
+
+                    Path { path in
+                        let height = geometry.size.height / 12
+                        let width = geometry.size.width
+
+                        guard !graph.oneSecondRMSHistory.isEmpty else { return }
+
+                        let smoothedRMS = smoothRMS(data: graph.oneSecondRMSHistory, windowSize: 5)
+                        let midY = height / 2
+
+                        path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(smoothedRMS.first ?? 0)))
+
+                        for (index, value) in smoothedRMS.enumerated() {
+                            let x = CGFloat(index) * width / CGFloat(smoothedRMS.count - 1)
                             let y = midY - height / 2 * CGFloat(value)
                             path.addLine(to: CGPoint(x: x, y: y))
                         }
@@ -63,11 +95,7 @@ struct ContentView: View {
                     .stroke(Color.green, lineWidth: 2.0)
                     .frame(height: geometry.size.height / 12)
                 }
-
-                // Current 1-Second RMS Value
-                Text("1-Second RMS: \(graph.max1SecRMS, specifier: "%.2f")")
-                    .font(.system(size: 14))
-                    .foregroundColor(.green)
+                .padding(.top, 10)
 
                 // Connect to Sensor Section
                 if !BLE.isConnected {
@@ -142,6 +170,23 @@ struct ContentView: View {
                     }
                     .padding()
                 }
+
+                // Additional Controls
+                HStack {
+                    Button("Reset Graphs") {
+                        graph.values.removeAll()
+                        graph.shortTermRMSHistory.removeAll()
+                        graph.oneSecondRMSHistory.removeAll()
+                    }
+                    .foregroundColor(.red)
+
+                    Spacer()
+
+                    Button("Refresh Graphs") {
+                        graph.objectWillChange.send()
+                    }
+                    .foregroundColor(.blue)
+                }
             }
             .padding(10)
             .fileExporter(isPresented: $showingExporter, document: file_content, contentType: .commaSeparatedText, defaultFilename: "emg-data") { result in
@@ -154,7 +199,18 @@ struct ContentView: View {
             }
         }
     }
+
+    private func smoothRMS(data: [CGFloat], windowSize: Int) -> [CGFloat] {
+        guard windowSize > 1 else { return data }
+        return data.enumerated().map { (index, _) in
+            let start = max(0, index - windowSize + 1)
+            let end = index + 1
+            let slice = data[start..<end]
+            return slice.reduce(0, +) / CGFloat(slice.count)
+        }
+    }
 }
+
 
 struct TextFile: FileDocument {
     static var readableContentTypes = [UTType.commaSeparatedText]
