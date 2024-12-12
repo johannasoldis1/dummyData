@@ -11,91 +11,10 @@ struct ContentView: View {
         GeometryReader { geometry in
             VStack(spacing: 10) {
 
-                // Raw EMG Graph
-                VStack {
-                    Text("Raw EMG Data")
-                        .font(.headline)
-                        .foregroundColor(.blue)
-
-                    Path { path in
-                        let height = geometry.size.height / 8
-                        let width = geometry.size.width
-
-                        guard graph.values.count > 1 else { return }
-
-                        let firstSample = max(0, graph.values.count - 200)
-                        let cutGraph = graph.values[firstSample..<graph.values.count]
-                        let midY = height / 2
-
-                        guard !cutGraph.isEmpty else { return }
-
-                        path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(cutGraph.first ?? 0)))
-
-                        for (index, value) in cutGraph.enumerated() {
-                            let x = width * CGFloat(index) / CGFloat(cutGraph.count - 1)
-                            let y = midY - height / 2 * CGFloat(value)
-                            path.addLine(to: CGPoint(x: x, y: y))
-                        }
-                    }
-                    .stroke(Color.blue, lineWidth: 1.5)
-                    .frame(height: geometry.size.height / 8)
-                }
-
-                // 0.1-Second RMS Graph
-                VStack {
-                    Text("0.1-Second RMS Data (Short-Term)")
-                        .font(.headline)
-                        .foregroundColor(.red)
-
-                    Path { path in
-                        let height = geometry.size.height / 12
-                        let width = geometry.size.width
-
-                        guard !graph.shortTermRMSHistory.isEmpty else { return }
-
-                        let smoothedRMS = smoothRMS(data: graph.shortTermRMSHistory, windowSize: 5)
-                        let midY = height / 2
-
-                        path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(smoothedRMS.first ?? 0)))
-
-                        for (index, value) in smoothedRMS.enumerated() {
-                            let x = CGFloat(index) * width / CGFloat(smoothedRMS.count - 1)
-                            let y = midY - height / 2 * CGFloat(value)
-                            path.addLine(to: CGPoint(x: x, y: y))
-                        }
-                    }
-                    .stroke(Color.red, lineWidth: 2.0)
-                    .frame(height: geometry.size.height / 12)
-                }
-                .padding(.top, 10)
-
-                // 1-Second RMS Graph
-                VStack {
-                    Text("1-Second RMS Data")
-                        .font(.headline)
-                        .foregroundColor(.green)
-
-                    Path { path in
-                        let height = geometry.size.height / 12
-                        let width = geometry.size.width
-
-                        guard !graph.oneSecondRMSHistory.isEmpty else { return }
-
-                        let smoothedRMS = smoothRMS(data: graph.oneSecondRMSHistory, windowSize: 5)
-                        let midY = height / 2
-
-                        path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(smoothedRMS.first ?? 0)))
-
-                        for (index, value) in smoothedRMS.enumerated() {
-                            let x = CGFloat(index) * width / CGFloat(smoothedRMS.count - 1)
-                            let y = midY - height / 2 * CGFloat(value)
-                            path.addLine(to: CGPoint(x: x, y: y))
-                        }
-                    }
-                    .stroke(Color.green, lineWidth: 2.0)
-                    .frame(height: geometry.size.height / 12)
-                }
-                .padding(.top, 10)
+                // Subviews for graphs
+                RawEMGGraphView(graph: graph, geometry: geometry)
+                ShortTermRMSGraphView(BLE: BLE, geometry: geometry)
+                LongTermRMSGraphView(graph: graph, geometry: geometry, smoothRMS: smoothRMS)
 
                 // Connect to Sensor Section
                 if !BLE.isConnected {
@@ -158,7 +77,7 @@ struct ContentView: View {
 
                         Button("Stop Recording") {
                             DispatchQueue.global(qos: .background).async {
-                                let fileContent = graph.stop_recording_and_save()
+                                let fileContent = graph.stop_recording_and_save() // Access the method directly
                                 DispatchQueue.main.async {
                                     file_content.text = fileContent
                                     print("Recording stopped and saved.")
@@ -175,7 +94,6 @@ struct ContentView: View {
                 HStack {
                     Button("Reset Graphs") {
                         graph.values.removeAll()
-                        graph.shortTermRMSHistory.removeAll()
                         graph.oneSecondRMSHistory.removeAll()
                     }
                     .foregroundColor(.red)
@@ -211,6 +129,107 @@ struct ContentView: View {
     }
 }
 
+struct RawEMGGraphView: View {
+    let graph: emgGraph
+    let geometry: GeometryProxy
+
+    var body: some View {
+        VStack {
+            Text("Raw EMG Data")
+                .font(.headline)
+                .foregroundColor(.blue)
+
+            Path { path in
+                let height = geometry.size.height / 8
+                let width = geometry.size.width
+
+                guard graph.values.count > 1 else { return }
+
+                let firstSample = max(0, graph.values.count - 1000) // Display last 1000 raw values
+                let cutGraph = graph.values[firstSample..<graph.values.count]
+                let midY = height / 2
+
+                guard !cutGraph.isEmpty else { return }
+
+                path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(cutGraph.first ?? 0)))
+
+                for (index, value) in cutGraph.enumerated() {
+                    let x = width * CGFloat(index) / CGFloat(cutGraph.count - 1)
+                    let y = midY - height / 2 * CGFloat(value)
+                    path.addLine(to: CGPoint(x: x, y: y))
+                }
+            }
+            .stroke(Color.blue, lineWidth: 1.5)
+            .frame(height: geometry.size.height / 8)
+        }
+    }
+}
+
+struct ShortTermRMSGraphView: View {
+    let BLE: BLEManager
+    let geometry: GeometryProxy
+
+    var body: some View {
+        VStack {
+            Text("Short-Term RMS Data")
+                .font(.headline)
+                .foregroundColor(.red)
+
+            Path { path in
+                let height = geometry.size.height / 8
+                let width = geometry.size.width
+                let history = BLE.rmsHistory
+
+                guard !history.isEmpty else { return }
+                let midY = height / 2
+
+                path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(history.first ?? 0)))
+
+                for (index, value) in history.enumerated() {
+                    let x = CGFloat(index) * width / CGFloat(history.count - 1)
+                    let y = midY - height / 2 * CGFloat(value)
+                    path.addLine(to: CGPoint(x: x, y: y))
+                }
+            }
+            .stroke(Color.red, lineWidth: 2.0)
+            .frame(height: geometry.size.height / 8)
+        }
+    }
+}
+
+struct LongTermRMSGraphView: View {
+    let graph: emgGraph
+    let geometry: GeometryProxy
+    let smoothRMS: ([CGFloat], Int) -> [CGFloat]
+
+    var body: some View {
+        VStack {
+            Text("1-Second RMS Data")
+                .font(.headline)
+                .foregroundColor(.green)
+
+            Path { path in
+                let height = geometry.size.height / 12
+                let width = geometry.size.width
+
+                guard !graph.oneSecondRMSHistory.isEmpty else { return }
+
+                let smoothedRMS = smoothRMS(graph.oneSecondRMSHistory, 10)
+                let midY = height / 2
+
+                path.move(to: CGPoint(x: 0, y: midY - height / 2 * CGFloat(smoothedRMS.first ?? 0)))
+
+                for (index, value) in smoothedRMS.enumerated() {
+                    let x = CGFloat(index) * width / CGFloat(smoothedRMS.count - 1)
+                    let y = midY - height / 2 * CGFloat(value)
+                    path.addLine(to: CGPoint(x: x, y: y))
+                }
+            }
+            .stroke(Color.green, lineWidth: 2.0)
+            .frame(height: geometry.size.height / 12)
+        }
+    }
+}
 
 struct TextFile: FileDocument {
     static var readableContentTypes = [UTType.commaSeparatedText]
@@ -232,5 +251,3 @@ struct TextFile: FileDocument {
         return FileWrapper(regularFileWithContents: data)
     }
 }
-
-
