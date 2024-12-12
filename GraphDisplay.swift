@@ -3,25 +3,27 @@ import SwiftUI
 
 class emgGraph: ObservableObject {
     @Published var values: [CGFloat] = [] // Raw EMG values for display
-    @Published var oneSecondRMSHistory: [CGFloat] = [] // Long-term RMS values for display
+    @Published var oneSecondRMSHistory: [CGFloat] = [] // 1-second RMS values for display
     @Published var shortTermRMSHistory: [CGFloat] = [] // Short-term RMS values for display
     @Published var max10SecRMSHistory: [CGFloat] = [] // Max RMS values for the last 10 seconds
 
     var recorded_values: [CGFloat] = [] // Recorded raw EMG values for export
-    var recorded_rms: [CGFloat] = [] // Long-term RMS values for export
+    var recorded_rms: [CGFloat] = [] // 1-second RMS values for export
     var shortTermRMSValues: [Float] = [] // Short-term RMS values for export
     var timestamps: [CFTimeInterval] = [] // Timestamps for each recorded value
 
     var recording: Bool = false // Recording state
     var start_time: CFTimeInterval = 0 // Start time for recording
+
+    // Short-term and 1-second RMS buffers with updated sizes
     private var buffer: [CGFloat] = [] // Buffer for short-term RMS calculations
-    private let sampleRate: Int = 1000 // 1000 samples per second (adjusted)
+    private let shortTermRMSWindowSize = 10 // Start with 10 samples for short-term RMS
 
-    private var shortTermRMSBuffer: [Float] = [] // Buffer for 100-sample RMS calculation
-    private let shortTermRMSWindowSize = 100 // 100 samples for short-term RMS
+    private var oneSecondRawBuffer: [CGFloat] = [] // Buffer for raw data to calculate 1-second RMS
+    private let oneSecondRawWindowSize = 100 // Start with 100 samples for 1-second RMS
 
-    private var longTermRMSBuffer: [CGFloat] = [] // Buffer for 1000-sample RMS calculation
-    private let longTermRMSWindowSize = 1000 // 1000 samples for long-term RMS
+    private var longTermRMSBuffer: [CGFloat] = [] // Buffer for 10-second max RMS calculation
+    private let longTermRMSWindowSize = 10 // 10 x 1-second RMS values
 
     init(firstValues: [CGFloat]) {
         values = firstValues
@@ -36,43 +38,24 @@ class emgGraph: ObservableObject {
         max10SecRMSHistory.removeAll()
         timestamps.removeAll()
         buffer.removeAll()
-        shortTermRMSBuffer.removeAll()
+        oneSecondRawBuffer.removeAll()
         longTermRMSBuffer.removeAll()
     }
-    
+
     func stop_recording_and_save() -> String {
         recording = false
-        let sampleInterval = 1.0 / Double(sampleRate) // Adjusted for finer intervals
 
         // Header for CSV
-        var dataset = "Time,EMG (Raw Data),Short-Term RMS (0.1s),1-Second RMS,Max RMS (10s)\n"
+        var dataset = "Sample,EMG (Raw Data),Short-Term RMS,1-Second RMS,Max RMS (10s)\n"
 
-        // Export raw EMG data, short-term RMS, 1-second RMS, and max RMS
         for (index, rawValue) in recorded_values.enumerated() {
-            let time = Double(index) * sampleInterval
             let shortTermRMS = index < shortTermRMSValues.count ? shortTermRMSValues[index] : 0.0
-            var oneSecondRMS: Float = 0.0
-            var maxRMSString = ""
+            let oneSecondRMS = index < recorded_rms.count ? recorded_rms[index] : 0.0
+            let maxRMSString = index % oneSecondRawWindowSize == 0 && index > 0 ? "\(longTermRMSBuffer.max() ?? 0.0)" : ""
 
-            // 1-Second RMS: Update every 10 samples
-            if index % sampleRate == 0 && index / sampleRate < recorded_rms.count {
-                oneSecondRMS = Float(recorded_rms[index / sampleRate])
-            }
-
-            // Max RMS over 10 seconds: Update every 10 seconds
-            if index % (sampleRate * 10) == 0 && index > 0 {
-                let startIndex = max(0, index - (sampleRate * 10 - 1)) / sampleRate
-                let endIndex = index / sampleRate
-                if startIndex < recorded_rms.count && endIndex < recorded_rms.count {
-                    let maxRMS = recorded_rms[startIndex...endIndex].max() ?? 0.0
-                    maxRMSString = "\(maxRMS)"
-                }
-            }
-
-            dataset += "\(time),\(rawValue),\(shortTermRMS),\(oneSecondRMS),\(maxRMSString)\n"
+            dataset += "\(index),\(rawValue),\(shortTermRMS),\(oneSecondRMS),\(maxRMSString)\n"
         }
 
-        // Save dataset to file
         saveToFile(dataset)
         return dataset
     }
@@ -101,76 +84,55 @@ class emgGraph: ObservableObject {
             timestamps.append(contentsOf: values.map { _ in now - start_time })
 
             for value in values {
+                // Update short-term RMS
                 buffer.append(value)
-
-                // Maintain buffer size for short-term RMS calculation
                 if buffer.count > shortTermRMSWindowSize {
                     buffer.removeFirst(buffer.count - shortTermRMSWindowSize)
                 }
-
-                // Calculate short-term RMS if buffer is full
                 if buffer.count == shortTermRMSWindowSize {
-                    let rmsValue = calculateRMS(for: buffer)
+                    let shortTermRMS = calculateRMS(for: buffer)
                     DispatchQueue.main.async {
-                        self.shortTermRMSValues.append(Float(rmsValue)) // Append short-term RMS
-                        self.shortTermRMSHistory.append(rmsValue) // Update display history
-                        self.recorded_rms.append(rmsValue) // Append long-term RMS
-                        self.updateGraphDisplay(for: values, rmsValue: rmsValue)
+                        self.shortTermRMSHistory.append(shortTermRMS)
+                        self.shortTermRMSValues.append(Float(shortTermRMS))
                     }
-                    updateMoving1SecRMS(fromShortTermRMS: Float(rmsValue))
+                }
+
+                // Update 1-second RMS
+                oneSecondRawBuffer.append(value)
+                if oneSecondRawBuffer.count > oneSecondRawWindowSize {
+                    oneSecondRawBuffer.removeFirst(oneSecondRawBuffer.count - oneSecondRawWindowSize)
+                }
+                if oneSecondRawBuffer.count == oneSecondRawWindowSize {
+                    let oneSecondRMS = calculateRMS(for: oneSecondRawBuffer)
+                    DispatchQueue.main.async {
+                        self.oneSecondRMSHistory.append(oneSecondRMS)
+                        self.recorded_rms.append(oneSecondRMS)
+                    }
+                    updateMax10SecRMS(oneSecondRMS)
                 }
             }
         }
 
         DispatchQueue.main.async {
             self.values.append(contentsOf: values)
-
-            // Limit raw data points for display
             if self.values.count > 1000 {
                 self.values.removeFirst(self.values.count - 1000)
             }
         }
     }
 
-    func calculateRMS(for values: [CGFloat]) -> CGFloat {
+    private func calculateRMS(for values: [CGFloat]) -> CGFloat {
         guard !values.isEmpty else { return 0.0 }
         let squaredSum = values.reduce(0.0) { $0 + $1 * $1 }
         return sqrt(squaredSum / CGFloat(values.count))
     }
 
-    private func updateMoving1SecRMS(fromShortTermRMS newRMS: Float) {
-        shortTermRMSBuffer.append(newRMS)
-
-        if shortTermRMSBuffer.count > longTermRMSWindowSize {
-            shortTermRMSBuffer.removeFirst()
-        }
-
-        if shortTermRMSBuffer.count == longTermRMSWindowSize {
-            let oneSecondRMS = calculateRMS(for: shortTermRMSBuffer.map { CGFloat($0) })
-
-            DispatchQueue.main.async {
-                self.oneSecondRMSHistory.append(oneSecondRMS)
-                if self.oneSecondRMSHistory.count > 100 {
-                    self.oneSecondRMSHistory.removeFirst()
-                }
-            }
-
-            // Update 10-second max RMS
-            updateMax10SecRMS(oneSecondRMS)
-        }
-    }
-
     private func updateMax10SecRMS(_ oneSecondRMS: CGFloat) {
         longTermRMSBuffer.append(oneSecondRMS)
-
-        // Maintain a buffer size of 1000 (representing 10 seconds)
         if longTermRMSBuffer.count > longTermRMSWindowSize {
             longTermRMSBuffer.removeFirst()
         }
-
-        // Calculate the maximum RMS over the last 10 seconds
         let maxRMS = longTermRMSBuffer.max() ?? 0.0
-
         DispatchQueue.main.async {
             self.max10SecRMSHistory.append(maxRMS)
             if self.max10SecRMSHistory.count > 100 {
@@ -178,7 +140,7 @@ class emgGraph: ObservableObject {
             }
         }
     }
-
+    
     private func updateGraphDisplay(for rawValues: [CGFloat], rmsValue: CGFloat) {
         self.values.append(contentsOf: rawValues)
         if self.values.count > 1000 {
@@ -190,5 +152,4 @@ class emgGraph: ObservableObject {
         }
     }
 }
-
 
