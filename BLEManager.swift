@@ -1,5 +1,7 @@
-// BLEManager.swift
-// EMG-ble-kth
+//
+//  BLEManager.swift
+//  EMG-ble-kth
+//
 
 import Foundation
 import CoreBluetooth
@@ -19,15 +21,16 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
     var emg: emgGraph
 
     // RMS Buffers and Calculation
-    private var emgBuffer: [Float] = [] // Buffer for 100-sample RMS calculation
-    private let windowSize = 100 // Number of samples for short-term RMS
-    @Published var currentRMS: Float = 0.0 // Latest 100-sample RMS
-    @Published var rmsHistory: [Float] = [] // Store historical 100-sample RMS values
+    private var emgBuffer: [Float] = [] // Buffer for 0.1-second RMS calculation
+    private let windowSize = 8 // 0.1 seconds at 8 Hz sampling rate
+    @Published var currentRMS: Float = 0.0 // Latest 0.1-second RMS
+    @Published var rmsHistory: [Float] = [] // Store historical 0.1-second RMS values
 
-    // 1000-Sample RMS Calculation
-    private var longTermRMSBuffer: [Float] = [] // Buffer for 1000-sample RMS aggregation
-    private let longTermWindowSize = 1000 // Number of RMS values for long-term RMS
     private let dataQueue = DispatchQueue(label: "com.emg.ble.data")
+    private var oneSecondRawBuffer: [Float] = [] // Buffer for raw data to calculate 1-second RMS
+    private let oneSecondRawWindowSize = 80 // Assume 80 samples = 1 second at 80 Hz sampling rate
+    @Published var oneSecondRawRMS: Float = 0.0 // Latest 1-second RMS calculated from raw data
+    @Published var oneSecondRawRMSHistory: [Float] = [] // Historical 1-second RMS values
 
     init(emg: emgGraph) {
         self.emg = emg
@@ -120,32 +123,63 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.emg.append(values: centeredData.map { CGFloat($0) })
         }
 
-        // Proceed with RMS calculations
-        updateRMS(with: centeredData)
+        // Update 0.1-second RMS
+        updateShortTermRMS(with: centeredData)
+
+        // Update 1-second RMS from raw data
+        updateOneSecondRawRMS(with: rawEMGData)
     }
 
-    func updateRMS(with newValues: [Float]) {
+    func updateShortTermRMS(with newValues: [Float]) {
         dataQueue.async {
             self.emgBuffer.append(contentsOf: newValues)
 
-            // Process data in fixed sample windows
-            while self.emgBuffer.count >= self.windowSize {
-                let samplesForRMS = Array(self.emgBuffer.prefix(self.windowSize))
-                self.emgBuffer.removeFirst(self.windowSize)
+            // Maintain a buffer for 0.1-second RMS
+            if self.emgBuffer.count > self.windowSize {
+                self.emgBuffer.removeFirst(self.emgBuffer.count - self.windowSize)
+            }
 
-                let calculatedRMS = self.calculateRMS(from: samplesForRMS)
+            if self.emgBuffer.count == self.windowSize {
+                // Calculate RMS for 0.1-second interval
+                let shortTermRMS = self.calculateRMS(from: self.emgBuffer)
 
                 DispatchQueue.main.async {
-                    self.currentRMS = calculatedRMS
-                    self.rmsHistory.append(calculatedRMS)
+                    self.currentRMS = shortTermRMS
+                    self.rmsHistory.append(shortTermRMS)
                     if self.rmsHistory.count > 100 {
                         self.rmsHistory.removeFirst()
                     }
 
-                    print("Short-Term RMS (100 samples): \(calculatedRMS)")
+                    print("Short-Term RMS (0.1s): \(shortTermRMS)")
+                }
+            }
+        }
+    }
 
-                    // Pass to long-term RMS aggregation
-                    self.updateLongTermRMS(with: calculatedRMS)
+    func updateOneSecondRawRMS(with newValues: [Float]) {
+        dataQueue.async {
+            // Append raw data to the 1-second buffer
+            self.oneSecondRawBuffer.append(contentsOf: newValues)
+
+            // Maintain buffer size for 1 second
+            if self.oneSecondRawBuffer.count > self.oneSecondRawWindowSize {
+                self.oneSecondRawBuffer.removeFirst(self.oneSecondRawBuffer.count - self.oneSecondRawWindowSize)
+            }
+
+            // Calculate RMS if the buffer is full
+            if self.oneSecondRawBuffer.count == self.oneSecondRawWindowSize {
+                let oneSecondRMS = self.calculateRMS(from: self.oneSecondRawBuffer)
+
+                DispatchQueue.main.async {
+                    self.oneSecondRawRMS = oneSecondRMS
+                    self.oneSecondRawRMSHistory.append(oneSecondRMS)
+
+                    // Limit history size
+                    if self.oneSecondRawRMSHistory.count > 100 {
+                        self.oneSecondRawRMSHistory.removeFirst()
+                    }
+
+                    print("1-Second RMS (Raw Data): \(oneSecondRMS)")
                 }
             }
         }
@@ -155,28 +189,6 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         guard !samples.isEmpty else { return 0.0 }
         let squaredSum = samples.reduce(0.0) { $0 + $1 * $1 }
         return sqrt(squaredSum / Float(samples.count))
-    }
-
-    func updateLongTermRMS(with newRMS: Float) {
-        longTermRMSBuffer.append(newRMS)
-
-        // Maintain a buffer for long-term RMS
-        if longTermRMSBuffer.count > longTermWindowSize {
-            longTermRMSBuffer.removeFirst()
-        }
-
-        if longTermRMSBuffer.count == longTermWindowSize {
-            let aggregatedRMS = calculateRMS(from: longTermRMSBuffer)
-
-            DispatchQueue.main.async {
-                self.emg.oneSecondRMSHistory.append(CGFloat(aggregatedRMS))
-                if self.emg.oneSecondRMSHistory.count > 100 {
-                    self.emg.oneSecondRMSHistory.removeFirst()
-                }
-
-                print("Long-Term RMS (1000 samples): \(aggregatedRMS)")
-            }
-        }
     }
 }
 
