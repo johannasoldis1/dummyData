@@ -22,15 +22,15 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
 
     // RMS Buffers and Calculation
     private var emgBuffer: [Float] = [] // Buffer for 0.1-second RMS calculation
-    private let windowSize = 8 // 0.1 seconds at 8 Hz sampling rate
+    private let windowSize = 10 // 0.1 seconds at 8 Hz sampling rate
     @Published var currentRMS: Float = 0.0 // Latest 0.1-second RMS
     @Published var rmsHistory: [Float] = [] // Store historical 0.1-second RMS values
 
+    private var oneSecondBuffer: [Float] = [] // Buffer for 1-second RMS calculation
+    private let oneSecondWindowSize = 100 // 1 second at 100 Hz sampling rate
+    @Published var oneSecondRMS: Float = 0.0 // Latest 1-second RMS
+
     private let dataQueue = DispatchQueue(label: "com.emg.ble.data")
-    private var oneSecondRawBuffer: [Float] = [] // Buffer for raw data to calculate 1-second RMS
-    private let oneSecondRawWindowSize = 80 // Assume 80 samples = 1 second at 80 Hz sampling rate
-    @Published var oneSecondRawRMS: Float = 0.0 // Latest 1-second RMS calculated from raw data
-    @Published var oneSecondRawRMSHistory: [Float] = [] // Historical 1-second RMS values
 
     init(emg: emgGraph) {
         self.emg = emg
@@ -123,11 +123,9 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
             self.emg.append(values: centeredData.map { CGFloat($0) })
         }
 
-        // Update 0.1-second RMS
-        updateShortTermRMS(with: centeredData)
-
-        // Update 1-second RMS from raw data
-        updateOneSecondRawRMS(with: rawEMGData)
+        // Proceed with RMS calculations for both time windows
+        updateShortTermRMS(with: centeredData) // 0.1-second RMS
+        updateOneSecondRMS(with: centeredData) // 1-second RMS
     }
 
     func updateShortTermRMS(with newValues: [Float]) {
@@ -156,30 +154,22 @@ class BLEManager: NSObject, ObservableObject, CBCentralManagerDelegate {
         }
     }
 
-    func updateOneSecondRawRMS(with newValues: [Float]) {
+    func updateOneSecondRMS(with newValues: [Float]) {
         dataQueue.async {
-            // Append raw data to the 1-second buffer
-            self.oneSecondRawBuffer.append(contentsOf: newValues)
+            self.oneSecondBuffer.append(contentsOf: newValues)
 
-            // Maintain buffer size for 1 second
-            if self.oneSecondRawBuffer.count > self.oneSecondRawWindowSize {
-                self.oneSecondRawBuffer.removeFirst(self.oneSecondRawBuffer.count - self.oneSecondRawWindowSize)
+            // Maintain a buffer for 1-second RMS
+            if self.oneSecondBuffer.count > self.oneSecondWindowSize {
+                self.oneSecondBuffer.removeFirst(self.oneSecondBuffer.count - self.oneSecondWindowSize)
             }
 
-            // Calculate RMS if the buffer is full
-            if self.oneSecondRawBuffer.count == self.oneSecondRawWindowSize {
-                let oneSecondRMS = self.calculateRMS(from: self.oneSecondRawBuffer)
+            if self.oneSecondBuffer.count == self.oneSecondWindowSize {
+                // Calculate RMS for 1-second interval
+                let oneSecRMS = self.calculateRMS(from: self.oneSecondBuffer)
 
                 DispatchQueue.main.async {
-                    self.oneSecondRawRMS = oneSecondRMS
-                    self.oneSecondRawRMSHistory.append(oneSecondRMS)
-
-                    // Limit history size
-                    if self.oneSecondRawRMSHistory.count > 100 {
-                        self.oneSecondRawRMSHistory.removeFirst()
-                    }
-
-                    print("1-Second RMS (Raw Data): \(oneSecondRMS)")
+                    self.oneSecondRMS = oneSecRMS
+                    print("1-Second RMS: \(oneSecRMS)")
                 }
             }
         }
